@@ -510,6 +510,38 @@ async def read_temp(date, time):
 
     return temp
 
+async def read_dew(date, time):
+    url = f'https://gaia.nullschool.net/data/gfs/{date}/{time}-dew_point_temp-2m-gfs-0.5.epak'
+    print(url)
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            epak_data = await response.read()
+
+    data = decode_epak(epak_data)
+    dew = scalar_product(data, re.compile('Dewpoint'), {
+        'hasMissing': False,
+        'legacyName': 'Dewpoint'
+    })
+
+    return dew
+
+async def read_pressure(date, time):
+    url = f'https://gaia.nullschool.net/data/gfs/{date}/{time}-mean_sea_level_pressure-gfs-0.5.epak'
+    print(url)
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            epak_data = await response.read()
+
+    data = decode_epak(epak_data)
+    pressure = scalar_product(data, re.compile('Pressure'), {
+        'hasMissing': False,
+        'legacyName': 'Pressure'
+    })
+
+    return pressure
+
 def get_date_time_string(dt):
     date_str = dt.strftime('%Y/%m/%d')
     time_str = dt.strftime('%H%M')
@@ -518,9 +550,13 @@ def get_date_time_string(dt):
 async def get_data_for_datetime(date_time):
     date_str, time_str = get_date_time_string(date_time)
     temp = await read_temp(date_str, time_str)
+    pressure = await read_pressure(date_str, time_str)
+    dew = await read_dew(date_str, time_str)
     return {
         'dateTime': date_time,
-        'temp': temp
+        'temp': temp,
+        'dew': dew,
+        'pressure': pressure
     }
 
 
@@ -562,6 +598,7 @@ def create_unit_descriptors():
         '°C': UnitDescriptor(lambda x: x - 273.15, precision=1, symbol='°C'),
         '°F': UnitDescriptor(lambda x: (x * 9) / 5 - 459.67, precision=1, symbol='°F'),
         'K': UnitDescriptor(lambda x: x, precision=1, symbol='K'),
+        'hPa': UnitDescriptor(lambda x: x / 100, precision=1, symbol='hPa'),
     }
 
 temp_unit_descriptors = create_unit_descriptors()
@@ -571,7 +608,7 @@ async def main():
     csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'locations.csv')
     with open(csv_path, newline='', encoding='utf-8') as csvfile:
         reader = csv.reader(csvfile)
-        _ = next(reader)  # если есть заголовок, пропускаем его
+        _ = next(reader)
         for row in reader:
             label = row[0]
             latitude = float(row[1])
@@ -580,21 +617,24 @@ async def main():
 
     one_hour_ago = datetime.now() - timedelta(hours=1)
     begin_date = one_hour_ago.replace(minute=0, second=0, microsecond=0)
-
     async for data_point in generate_data(begin_date):
         dateTime = data_point['dateTime']
         temp = data_point['temp']
-        # dew = data_point['dew']
+        pressure = data_point['pressure']
+        dew = data_point['dew']
 
         for name, lat, long in locations:
             temp_val = temp.field().bilinear(long, lat)
             temp_formatted = temp_unit_descriptors['°C'].format(temp_val)['formattedVal']
 
-            # dew_val = dew.field().bilinear(long, lat)
-            # dew_formatted = temp_unit_descriptors['°C'].format(dew_val)['formattedVal']
+            pressure_val = pressure.field().bilinear(long, lat)
+            pressure_val_formatted = temp_unit_descriptors['hPa'].format(pressure_val)['formattedVal']
+
+            dew_val = dew.field().bilinear(long, lat)
+            dew_formatted = temp_unit_descriptors['°C'].format(dew_val)['formattedVal']
 
             dt = dateTime.strftime('%Y-%m-%d %H:%M:%S')
-            print(name, dt, temp_formatted)
+            print(name, dt, temp_formatted, dew_formatted, pressure_val_formatted)
 
 if __name__ == '__main__':
     asyncio.run(main())
