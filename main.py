@@ -8,6 +8,48 @@ import re
 import struct
 import aiohttp
 import numpy as np
+from concurrent.futures import ProcessPoolExecutor
+
+
+executor = ProcessPoolExecutor(max_workers=4)
+
+class Field:
+    def __init__(self, grid, data):
+        self.grid = grid
+        self.data = data
+
+    def value_at(self, i):
+        return self.data[i]
+
+    def scalarize(self, x):
+        return x
+
+    def is_defined(self, i):
+        return not np.isnan(self.data[i])
+
+    @property
+    def nearest(self):
+        return nearest_scalar(self.grid, self.data)
+
+    @property
+    def bilinear(self):
+        return bilinear_scalar(self.grid, self.data)
+
+class Result:
+    def __init__(self, time, field, grid):
+        self._time = time
+        self._field = field
+        self._grid = grid
+
+    def valid_time(self):
+        return parts(self._time['data'][0])
+
+    def grid(self):
+        return self._grid
+
+    def field(self):
+        return self._field
+
 
 RAD = math.pi / 180
 
@@ -272,38 +314,8 @@ def scalar_product(bundle, selector: re.Pattern, options: dict = None):
         options['transform'](data)
 
     grid = RegularGrid(lon['sequence'], lat['sequence'])
-
-    class Field:
-        def value_at(self, i):
-            return data[i]
-
-        def scalarize(self, x):
-            return x
-
-        def is_defined(self, i):
-            return not np.isnan(data[i])
-
-        @property
-        def nearest(self):
-            return nearest_scalar(grid, data)
-
-        @property
-        def bilinear(self):
-            return bilinear_scalar(grid, data)
-
-    field_instance = Field()
-
-    class Result:
-        def valid_time(self):
-            return parts(time['data'][0])
-
-        def grid(self):
-            return grid
-
-        def field(self):
-            return field_instance
-
-    return Result()
+    field_instance = Field(grid, data)
+    return Result(time, field_instance, grid)
 
 def to_int32(x):
     x = x & 0xFFFFFFFF
@@ -494,8 +506,9 @@ def decode_epak(buffer: bytes, header_only=False):
 
     return {'header': header, 'blocks': blocks, 'metadata': metadata}
 
-async def read_temp(date, time):
-    url = f'https://gaia.nullschool.net/data/gfs/{date}/{time}-temp-surface-level-gfs-0.5.epak'
+async def read_temp():
+    # url = f'https://gaia.nullschool.net/data/gfs/{date}/{time}-temp-surface-level-gfs-0.5.epak'
+    url = f'https://gaia.nullschool.net/data/gfs/current/current-temp-surface-level-gfs-0.5.epak'
     print(url)
 
     async with aiohttp.ClientSession() as session:
@@ -510,8 +523,9 @@ async def read_temp(date, time):
 
     return temp
 
-async def read_dew(date, time):
-    url = f'https://gaia.nullschool.net/data/gfs/{date}/{time}-dew_point_temp-2m-gfs-0.5.epak'
+async def read_dew():
+    # url = f'https://gaia.nullschool.net/data/gfs/{date}/{time}-dew_point_temp-2m-gfs-0.5.epak'
+    url = f'https://gaia.nullschool.net/data/gfs/current/current-dew_point_temp-2m-gfs-0.5.epak'
     print(url)
 
     async with aiohttp.ClientSession() as session:
@@ -526,8 +540,9 @@ async def read_dew(date, time):
 
     return dew
 
-async def read_pressure(date, time):
-    url = f'https://gaia.nullschool.net/data/gfs/{date}/{time}-mean_sea_level_pressure-gfs-0.5.epak'
+async def read_pressure():
+    # url = f'https://gaia.nullschool.net/data/gfs/{date}/{time}-mean_sea_level_pressure-gfs-0.5.epak'
+    url = f'https://gaia.nullschool.net/data/gfs/current/current-mean_sea_level_pressure-gfs-0.5.epak'
     print(url)
 
     async with aiohttp.ClientSession() as session:
@@ -547,37 +562,19 @@ def get_date_time_string(dt):
     time_str = dt.strftime('%H%M')
     return date_str, time_str
 
-async def get_data_for_datetime(date_time):
-    date_str, time_str = get_date_time_string(date_time)
-    temp = await read_temp(date_str, time_str)
-    pressure = await read_pressure(date_str, time_str)
-    dew = await read_dew(date_str, time_str)
+async def get_data():
+    tasks = [
+        read_temp(),
+        read_pressure(),
+        read_dew(),
+    ]
+    temp, pressure, dew = await asyncio.gather(*tasks)
     return {
-        'dateTime': date_time,
         'temp': temp,
-        'dew': dew,
-        'pressure': pressure
+        'pressure': pressure,
+        'dew': dew
     }
 
-
-async def generate_data(begin_date):
-    current_date = begin_date
-    step = 1
-    batch_size = 1
-    now = datetime.now()
-
-    while True:
-        next_date = current_date + timedelta(hours=step * batch_size)
-        if next_date > now:
-            return
-        tasks = []
-        for i in range(batch_size):
-            tmp_date = current_date + timedelta(hours=i * step)
-            tasks.append(get_data_for_datetime(tmp_date))
-        data = await asyncio.gather(*tasks)
-        for row in data:
-            yield row
-        current_date = next_date
 
 class UnitDescriptor:
     def __init__(self, convert_func, precision=1, symbol=''):
@@ -592,16 +589,58 @@ class UnitDescriptor:
         val = self.convert(x)
         formatted_val = f"{val:.{self.precision}f} {self.symbol}"
         return {'formattedVal': formatted_val}
+    
+def celsium(x):
+    return x - 273.15
 
-def create_unit_descriptors():
-    return {
-        '°C': UnitDescriptor(lambda x: x - 273.15, precision=1, symbol='°C'),
-        '°F': UnitDescriptor(lambda x: (x * 9) / 5 - 459.67, precision=1, symbol='°F'),
-        'K': UnitDescriptor(lambda x: x, precision=1, symbol='K'),
-        'hPa': UnitDescriptor(lambda x: x / 100, precision=1, symbol='hPa'),
-    }
+def farengate(x):
+    return (x * 9) / 5 - 459.67
 
-temp_unit_descriptors = create_unit_descriptors()
+def kelvin(x):
+    return x
+
+def pascal(x):
+    return x / 100
+
+unit_descriptors = {
+    '°C': UnitDescriptor(celsium, precision=1, symbol='°C'),
+    '°F': UnitDescriptor(farengate, precision=1, symbol='°F'),
+    'K': UnitDescriptor(kelvin, precision=1, symbol='K'),
+    'hPa': UnitDescriptor(pascal, precision=1, symbol='hPa'),
+}
+
+def process_location(temp, pressure, dew, loc, temp_unit_descriptors):
+    name, lat, long = loc
+
+    temp_val = temp.field().bilinear(long, lat)
+    temp_formatted = temp_unit_descriptors['°C'].format(temp_val)['formattedVal']
+
+    pressure_val = pressure.field().bilinear(long, lat)
+    pressure_formatted = temp_unit_descriptors['hPa'].format(pressure_val)['formattedVal']
+
+    dew_val = dew.field().bilinear(long, lat)
+    dew_formatted = temp_unit_descriptors['°C'].format(dew_val)['formattedVal']
+
+    dt = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    return (name, dt, temp_formatted, dew_formatted, pressure_formatted)
+
+async def handle_data(temp, pressure, dew, locations, temp_unit_descriptors):
+    loop = asyncio.get_running_loop()
+    tasks = [
+        loop.run_in_executor(
+            executor,
+            process_location,
+            temp,
+            pressure,
+            dew,
+            loc,
+            temp_unit_descriptors
+        )
+        for loc in locations
+    ]
+    results = await asyncio.gather(*tasks)
+    return results
 
 async def main():
     locations = []
@@ -615,26 +654,16 @@ async def main():
             longitude = float(row[2])
             locations.append([label, latitude, longitude])
 
-    one_hour_ago = datetime.now() - timedelta(hours=1)
-    begin_date = one_hour_ago.replace(minute=0, second=0, microsecond=0)
-    async for data_point in generate_data(begin_date):
-        dateTime = data_point['dateTime']
-        temp = data_point['temp']
-        pressure = data_point['pressure']
-        dew = data_point['dew']
+    data = await get_data()
 
-        for name, lat, long in locations:
-            temp_val = temp.field().bilinear(long, lat)
-            temp_formatted = temp_unit_descriptors['°C'].format(temp_val)['formattedVal']
+    temp = data['temp']
+    pressure = data['pressure']
+    dew = data['dew']
 
-            pressure_val = pressure.field().bilinear(long, lat)
-            pressure_val_formatted = temp_unit_descriptors['hPa'].format(pressure_val)['formattedVal']
+    results = await handle_data(temp, pressure, dew, locations, unit_descriptors)
 
-            dew_val = dew.field().bilinear(long, lat)
-            dew_formatted = temp_unit_descriptors['°C'].format(dew_val)['formattedVal']
-
-            dt = dateTime.strftime('%Y-%m-%d %H:%M:%S')
-            print(name, dt, temp_formatted, dew_formatted, pressure_val_formatted)
+    for name, dt, temp_f, dew_f, pressure_f in results:
+        print(name, dt, temp_f, dew_f, pressure_f)
 
 if __name__ == '__main__':
     asyncio.run(main())
