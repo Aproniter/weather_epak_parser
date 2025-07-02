@@ -1,10 +1,9 @@
 import math
-
 import numpy as np
+from dataclasses import dataclass, field
 
 from config import RAD
-from utils import as_date, bilinear_scalar, decimalize, floor_mod, nearest_scalar
-
+from utils import as_date, bilinear_scalar, decimalize, floor_mod, nearest_scalar, celsium, farengate, kelvin, pascal, cloud
 
 class UnitDescriptor:
     def __init__(self, convert_func, precision=1, symbol=''):
@@ -17,8 +16,72 @@ class UnitDescriptor:
 
     def format(self, x):
         val = self.convert(x)
-        formatted_val = f"{val:.{self.precision}f} {self.symbol}"
+        formatted_val = f'{val:.{self.precision}f} {self.symbol}'
         return {'formattedVal': formatted_val}
+
+unit_descriptors = {
+    '°C': UnitDescriptor(celsium, precision=1, symbol='°C'),
+    '°F': UnitDescriptor(farengate, precision=1, symbol='°F'),
+    'K': UnitDescriptor(kelvin, precision=1, symbol='K'),
+    'hPa': UnitDescriptor(pascal, precision=1, symbol='hPa'),
+    'kgM': UnitDescriptor(cloud, precision=1, symbol='kgM'),
+}
+
+@dataclass
+class WeatherData:
+    temp: float
+    pressure: float
+    dew: float
+    cloud: float
+    precipitable: float
+    temp_ahead: float
+    pressure_ahead: float
+    dew_ahead: float
+    cloud_ahead: float
+    precipitable_ahead: float
+    unit_descriptors: dict = field(default_factory=dict)
+
+    def __post_init__(self):
+        self.unit_descriptors = {
+            'temp': unit_descriptors['°C'],
+            'pressure': unit_descriptors['hPa'],
+            'dew': unit_descriptors['°C'],
+            'cloud': unit_descriptors['kgM'],
+            'precipitable': unit_descriptors['kgM'],
+            'temp_ahead': unit_descriptors['°C'],
+            'pressure_ahead': unit_descriptors['hPa'],
+            'dew_ahead': unit_descriptors['°C'],
+            'cloud_ahead': unit_descriptors['kgM'],
+            'precipitable_ahead': unit_descriptors['kgM'],
+        }
+
+from dataclasses import dataclass
+from datetime import datetime
+
+@dataclass
+class Result:
+    name: str
+    dt: str
+    temp_f: float
+    temp_f_time: datetime
+    dew_f: float
+    dew_f_time: datetime
+    pressure_f: float
+    pressure_f_time: datetime
+    cloud_f: float
+    cloud_f_time: datetime
+    precipitable_f: float
+    precipitable_f_time: datetime
+    temp_ahead_f: float
+    temp_ahead_f_time: datetime
+    dew_ahead_f: float
+    dew_ahead_f_time: datetime
+    pressure_ahead_f: float
+    pressure_ahead_f_time: datetime
+    cloud_ahead_f: float
+    cloud_ahead_f_time: datetime
+    precipitable_ahead_f: float
+    precipitable_ahead_f_time: datetime
 
 class Field:
     def __init__(self, grid, data):
@@ -42,14 +105,14 @@ class Field:
     def bilinear(self):
         return bilinear_scalar(self.grid, self.data)
 
-class Result:
+class Fields:
     def __init__(self, time, field, grid):
         self._time = time
         self._field = field
         self._grid = grid
 
     def valid_time(self):
-        return parts(self._time['data'][0])
+        return tuple(set(self._time['data']))[0]
 
     def grid(self):
         return self._grid

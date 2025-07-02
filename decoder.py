@@ -1,23 +1,11 @@
 import json
 import re
 import struct
-
 import numpy as np
-from schemas import Field, RegularGrid, Result
+
+import schemas
 from utils import legacy_munge
 
-
-def celsium(x):
-    return x - 273.15
-
-def farengate(x):
-    return (x * 9) / 5 - 459.67
-
-def kelvin(x):
-    return x
-
-def pascal(x):
-    return x / 100
 
 def scalar_product(bundle, selector: re.Pattern, options: dict = None):
     if options is None:
@@ -58,9 +46,9 @@ def scalar_product(bundle, selector: re.Pattern, options: dict = None):
     if 'transform' in options and callable(options['transform']):
         options['transform'](data)
 
-    grid = RegularGrid(lon['sequence'], lat['sequence'])
-    field_instance = Field(grid, data)
-    return Result(time, field_instance, grid)
+    grid = schemas.RegularGrid(lon['sequence'], lat['sequence'])
+    field_instance = schemas.Field(grid, data)
+    return schemas.Fields(time, field_instance, grid)
 
 def to_int32(x):
     x = x & 0xFFFFFFFF
@@ -219,6 +207,7 @@ def decode_epak(buffer: bytes, header_only=False):
 
     header_json_bytes = view[i:i+length].tobytes()
     header = json.loads(decode_utf8(header_json_bytes))
+
     i += length
 
     blocks = []

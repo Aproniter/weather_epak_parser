@@ -7,5 +7,6 @@ requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.12.13",
     "numpy>=2.3.1",
+    "pytz>=2025.2",
     "redis>=6.2.0",
 ]

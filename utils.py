@@ -1,28 +1,26 @@
-from datetime import datetime, timezone
 import hashlib
 import math
-
+import time
 import numpy as np
+from datetime import datetime, timezone
+
+from config import redis_expire_seconds
 
 
-def make_cache_key(key_prefix, *args, **kwargs):
-    import reprlib
-    repr_args = reprlib.repr(args)
-    repr_kwargs = reprlib.repr(kwargs)
-    base = key_prefix + repr_args + repr_kwargs
-    return 'cache:' + hashlib.sha256(base.encode()).hexdigest()
+def make_cache_key(key_prefix, *args):
+    return 'cache:' + key_prefix + str(args)
 
-async def cache_binary_data_example(redis_client, data: bytes, *args, **kwargs):
-    key = make_cache_key('my_binary_data', *args, **kwargs)
-    await redis_client.set(key, data, ex=3600)
+async def cache_binary_data(redis_client, data: bytes, *args):
+    key = make_cache_key('my_binary_data', *args)
+    await redis_client.set(key, data, ex=redis_expire_seconds)
 
-async def get_cached_binary_data(redis_client, *args, **kwargs):
-    key = make_cache_key('my_binary_data', *args, **kwargs)
+async def get_cached_binary_data(redis_client, *args):
+    key = make_cache_key('my_binary_data', *args)
     cached = await redis_client.get(key)
     if cached is not None:
-        print("Cache hit")
+        print('Cache hit')
         return cached
-    print("Cache miss")
+    print('Cache miss')
     return None
 
 def decimalize(x):
@@ -150,3 +148,18 @@ def get_date_time_string(dt):
     date_str = dt.strftime('%Y/%m/%d')
     time_str = dt.strftime('%H%M')
     return date_str, time_str
+
+def celsium(x):
+    return x - 273.15
+
+def farengate(x):
+    return (x * 9) / 5 - 459.67
+
+def kelvin(x):
+    return x
+
+def pascal(x):
+    return x / 100
+
+def cloud(x):
+    return x
