@@ -1,9 +1,11 @@
 import math
+from typing import Dict, Optional, Tuple
 import numpy as np
 from dataclasses import dataclass, field
+from datetime import datetime
 
-from config import RAD
 from utils import as_date, bilinear_scalar, decimalize, floor_mod, nearest_scalar, celsium, farengate, kelvin, pascal, cloud
+
 
 class UnitDescriptor:
     def __init__(self, convert_func, precision=1, symbol=''):
@@ -26,62 +28,6 @@ unit_descriptors = {
     'hPa': UnitDescriptor(pascal, precision=1, symbol='hPa'),
     'kgM': UnitDescriptor(cloud, precision=1, symbol='kgM'),
 }
-
-@dataclass
-class WeatherData:
-    temp: float
-    pressure: float
-    dew: float
-    cloud: float
-    precipitable: float
-    temp_ahead: float
-    pressure_ahead: float
-    dew_ahead: float
-    cloud_ahead: float
-    precipitable_ahead: float
-    unit_descriptors: dict = field(default_factory=dict)
-
-    def __post_init__(self):
-        self.unit_descriptors = {
-            'temp': unit_descriptors['°C'],
-            'pressure': unit_descriptors['hPa'],
-            'dew': unit_descriptors['°C'],
-            'cloud': unit_descriptors['kgM'],
-            'precipitable': unit_descriptors['kgM'],
-            'temp_ahead': unit_descriptors['°C'],
-            'pressure_ahead': unit_descriptors['hPa'],
-            'dew_ahead': unit_descriptors['°C'],
-            'cloud_ahead': unit_descriptors['kgM'],
-            'precipitable_ahead': unit_descriptors['kgM'],
-        }
-
-from dataclasses import dataclass
-from datetime import datetime
-
-@dataclass
-class Result:
-    name: str
-    dt: str
-    temp_f: float
-    temp_f_time: datetime
-    dew_f: float
-    dew_f_time: datetime
-    pressure_f: float
-    pressure_f_time: datetime
-    cloud_f: float
-    cloud_f_time: datetime
-    precipitable_f: float
-    precipitable_f_time: datetime
-    temp_ahead_f: float
-    temp_ahead_f_time: datetime
-    dew_ahead_f: float
-    dew_ahead_f_time: datetime
-    pressure_ahead_f: float
-    pressure_ahead_f_time: datetime
-    cloud_ahead_f: float
-    cloud_ahead_f_time: datetime
-    precipitable_ahead_f: float
-    precipitable_ahead_f_time: datetime
 
 class Field:
     def __init__(self, grid, data):
@@ -119,8 +65,61 @@ class Fields:
 
     def field(self):
         return self._field
-    
+
+@dataclass
+class WeatherData:
+    temperature: Optional[Fields]
+    pressure: Optional[Fields]
+    dewpoint: Optional[Fields]
+    cloud: Optional[Fields]
+    precipitable: Optional[Fields]
+
+    temperature_ahead: Dict[int, Fields] = field(default_factory=dict)
+    pressure_ahead: Dict[int, Fields] = field(default_factory=dict)
+    dewpoint_ahead: Dict[int, Fields] = field(default_factory=dict)
+    cloud_ahead: Dict[int, Fields] = field(default_factory=dict)
+    precipitable_ahead: Dict[int, Fields] = field(default_factory=dict)
+    unit_descriptors: dict = field(default_factory=dict)
+
+    def __post_init__(self):
+        self.unit_descriptors = {
+            'temperature': unit_descriptors['°C'],
+            'pressure': unit_descriptors['hPa'],
+            'dewpoint': unit_descriptors['°C'],
+            'cloud': unit_descriptors['kgM'],
+            'precipitable': unit_descriptors['kgM'],
+            'temperature_ahead': unit_descriptors['°C'],
+            'pressure_ahead': unit_descriptors['hPa'],
+            'dewpoint_ahead': unit_descriptors['°C'],
+            'cloud_ahead': unit_descriptors['kgM'],
+            'precipitable_ahead': unit_descriptors['kgM'],
+        }
+
+@dataclass
+class Result:
+    name: str
+    dt: str
+    temperature_f: Optional[float] = None
+    temperature_f_time: Optional[datetime] = None
+    dewpoint_f: Optional[float] = None
+    dewpoint_f_time: Optional[datetime] = None
+    pressure_f: Optional[float] = None
+    pressure_f_time: Optional[datetime] = None
+    cloud_f: Optional[float] = None
+    cloud_f_time: Optional[datetime] = None
+    precipitable_f: Optional[float] = None
+    precipitable_f_time: Optional[datetime] = None
+
+    temperature_ahead_f: Dict[int, Tuple[float, datetime]] = field(default_factory=dict)
+    dewpoint_ahead_f: Dict[int, Tuple[float, datetime]] = field(default_factory=dict)
+    pressure_ahead_f: Dict[int, Tuple[float, datetime]] = field(default_factory=dict)
+    cloud_ahead_f: Dict[int, Tuple[float, datetime]] = field(default_factory=dict)
+    precipitable_ahead_f: Dict[int, Tuple[float, datetime]] = field(default_factory=dict)
+
+
 class RegularGrid:
+    RAD = math.pi / 180
+
     def __init__(self, lambda_axis, phi_axis):
         self.nx = int(math.floor(lambda_axis['size']))
         self.ny = int(math.floor(phi_axis['size']))
@@ -134,12 +133,12 @@ class RegularGrid:
         self.lambda1 = self.lambda0 + self.Dlambda * (self.nx - 1)
         self.phi1 = self.phi0 + self.Dphi * (self.ny - 1)
 
-        self.lambda_low = (self.lambda0 - self.Dlambda / 2) * RAD
-        self.lambda_high = (self.lambda1 + self.Dlambda / 2) * RAD
+        self.lambda_low = (self.lambda0 - self.Dlambda / 2) * self.RAD
+        self.lambda_high = (self.lambda1 + self.Dlambda / 2) * self.RAD
         self.lambda_size = self.lambda_high - self.lambda_low
 
-        self.phi_low = (self.phi0 - self.Dphi / 2) * RAD
-        self.phi_high = (self.phi1 + self.Dphi / 2) * RAD
+        self.phi_low = (self.phi0 - self.Dphi / 2) * self.RAD
+        self.phi_high = (self.phi1 + self.Dphi / 2) * self.RAD
         self.phi_size = self.phi_high - self.phi_low
 
         self.low = [self.lambda_low, self.phi_low]

@@ -1,0 +1,23 @@
+[urls]
+base = "https://gaia.nullschool.net/data/gfs"
+selected = ["Temperature", "Pressure", "Dewpoint", "Cloud", "Precipitable"]
+
+[urls.selectors]
+Temperature = "temp-surface-level-gfs-0.5.epak"
+Dewpoint = "dew_point_temp-2m-gfs-0.5.epak"
+Pressure = "mean_sea_level_pressure-gfs-0.5.epak"
+Cloud = "total_cloud_water-gfs-0.5.epak"
+Precipitable = "total_precipitable_water-gfs-0.5.epak"
+
+[redis]
+host = "localhost"
+port = 6379
+db = 0
+max_connections = 20
+expire_seconds = 3600
+
+[local]
+timezone = "Europe/Moscow"
+
+[time_offsets]
+hours = []

@@ -1,26 +1,26 @@
-import hashlib
 import math
-import time
 import numpy as np
 from datetime import datetime, timezone
 
-from config import redis_expire_seconds
+from config import Config
 
+
+config = Config()
 
 def make_cache_key(key_prefix, *args):
     return 'cache:' + key_prefix + str(args)
 
 async def cache_binary_data(redis_client, data: bytes, *args):
     key = make_cache_key('my_binary_data', *args)
-    await redis_client.set(key, data, ex=redis_expire_seconds)
+    await redis_client.set(key, data, ex=config.get("redis.expire_seconds"))
 
 async def get_cached_binary_data(redis_client, *args):
     key = make_cache_key('my_binary_data', *args)
     cached = await redis_client.get(key)
     if cached is not None:
-        print('Cache hit')
+        # print('Cache hit')
         return cached
-    print('Cache miss')
+    # print('Cache miss')
     return None
 
 def decimalize(x):

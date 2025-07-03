@@ -1,53 +1,92 @@
 import csv
-from dataclasses import fields
+from datetime import datetime
 import os
 import asyncio
-from datetime import datetime
 import pytz
 import redis.asyncio as aioredis
 from concurrent.futures import ProcessPoolExecutor
 
+from config import Config
 from reader import get_data
 from schemas import Result, WeatherData
 
 
-pool = aioredis.ConnectionPool(host='localhost', port=6379, db=0, max_connections=20)
-redis_client = aioredis.Redis(connection_pool=pool)
-
 executor = ProcessPoolExecutor(max_workers=4)
 
-def process_location(weather_data, loc):
+def parsing_location(weather_data, loc):
+    config = Config()
     name, lat, long = loc
-    field_names = [f.name for f in fields(WeatherData) if f.name != 'unit_descriptors']
-    results = []
-    local_tz = pytz.timezone('Europe/Moscow')
-    for field_name in field_names:
-        field = getattr(weather_data, field_name)
-        unit = weather_data.unit_descriptors[field_name]
-        value = field.field().bilinear(long, lat)
-        time_field = pytz.utc.localize(datetime.strptime(field.valid_time(), "%Y-%m-%dT%H:%MZ")).astimezone(local_tz).strftime('%Y-%m-%dT%H:%MZ')
-        formatted = unit.format(value)['formattedVal']
-        results.append(formatted)
-        results.append(time_field)
+    local_tz = pytz.timezone(config.get("local.timezone", "UTC"))
+
+    def extract_val_time(value_obj, unit):
+        val = value_obj.field().bilinear(long, lat)
+        time_field = pytz.utc.localize(datetime.strptime(value_obj.valid_time(), "%Y-%m-%dT%H:%MZ")).astimezone(local_tz).strftime('%Y-%m-%dT%H:%MZ')
+        formatted = unit.format(val)['formattedVal']
+        return formatted, time_field
+    
+    def extract_ahead(ahead_dict, unit):
+        if not ahead_dict:
+            return {}
+        return {
+            offset: extract_val_time(val_obj, unit)
+            for offset, val_obj in ahead_dict.items()
+        }
+    
+    fields_info = tuple(map(lambda x: x.lower() ,config.get("urls.selected")))
+    
+    simple_results = {
+        f"{f_in}_f": extract_val_time(getattr(weather_data, f_in), weather_data.unit_descriptors[f_in])
+        for f_in in fields_info
+    }
+
+    ahead_results = {
+        f"{f_in}_ahead_f": extract_ahead(getattr(weather_data, f"{f_in}_ahead"), weather_data.unit_descriptors[f_in])
+        for f_in in fields_info
+    }
 
     dt = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    return Result(name, dt, *results)
 
-async def handle_data(weather_data: WeatherData, locations):
+    result_kwargs = {'name': name, 'dt': dt}
+
+    for out_field_name, (val, time_val) in simple_results.items():
+        result_kwargs[out_field_name] = val
+        result_kwargs[out_field_name + '_time'] = time_val
+
+    result_kwargs.update(ahead_results)
+
+    return Result(**result_kwargs)
+
+async def handle_data(weather_data: WeatherData, locations, executor):
     loop = asyncio.get_running_loop()
     tasks = [
         loop.run_in_executor(
             executor,
-            process_location,
+            parsing_location,
             weather_data,
             loc
         )
         for loc in locations
     ]
-    results = await asyncio.gather(*tasks)
+    try:
+        results = await asyncio.gather(*tasks)
+    except AttributeError as e:
+        if "'ConnectionError' object has no attribute 'field'" in str(e):
+            print("Redis not found")
+        else:
+            raise AttributeError(e)
     return results
 
-async def process_locations(locations=None, file_locations_path=None):
+async def process_locations(locations=None, file_locations_path=None, config_params: dict={}):
+    config = Config()
+    config.init(config_params)
+    redis_conf = config.get("redis", {})
+    pool = aioredis.ConnectionPool(
+        host=redis_conf.get("host", "localhost"),
+        port=redis_conf.get("port", 6379),
+        db=redis_conf.get("db", 0),
+        max_connections=redis_conf.get("max_connections", 20)
+    )
+    redis_client = aioredis.Redis(connection_pool=pool)
     weather_data: WeatherData = await get_data(redis_client)
 
     if locations is None and file_locations_path is None:
@@ -63,8 +102,7 @@ async def process_locations(locations=None, file_locations_path=None):
                 latitude = float(row[1])
                 longitude = float(row[2])
                 locations.append([label, latitude, longitude])
-    results = await handle_data(weather_data, locations)
-    
+    results = await handle_data(weather_data, locations, executor)
     results_dict = {}
     for result in results:
         loc = next((loc for loc in locations if loc[0] == result.name), None)
@@ -75,6 +113,12 @@ async def process_locations(locations=None, file_locations_path=None):
 
 if __name__ == '__main__':
     csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'locations.csv')
-    result = asyncio.run(process_locations(file_locations_path=csv_path))
+    result = asyncio.run(process_locations(
+        file_locations_path=csv_path,
+        config_params={
+            'urls': {'selected': ['Temperature']},
+            'time_offsets': {'hours': []}
+        }
+    ))
     for coord, data in result.items():
         print(coord, data)
